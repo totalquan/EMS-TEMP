@@ -1,0 +1,40 @@
+# Prometheus 配置文件
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: "pv-forecast-monitor"
+
+rule_files:
+  - "alerts.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+scrape_configs:
+  # 光伏预测服务
+  - job_name: "pv-forecast-service"
+    metrics_path: "/api/v1/metrics"
+    static_configs:
+      - targets: ["pv-forecast:9091"]
+        labels:
+          service: "pv-forecast"
+          env: "production"
+
+  # Prometheus自身
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # InfluxDB
+  - job_name: "influxdb"
+    static_configs:
+      - targets: ["influxdb:8086"]
+
+  # Kafka（需要kafka-exporter）
+  - job_name: "kafka"
+    static_configs:
+      - targets: ["kafka-exporter:9308"]

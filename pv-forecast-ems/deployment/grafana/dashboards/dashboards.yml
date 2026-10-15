@@ -1,0 +1,14 @@
+# Grafana 看板提供者配置
+apiVersion: 1
+
+providers:
+  - name: 'PV Forecast Dashboards'
+    orgId: 1
+    folder: '光伏预测EMS'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: true

@@ -1,0 +1,29 @@
+# Grafana 数据源配置
+apiVersion: 1
+
+datasources:
+  # Prometheus 指标数据源
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: POST
+
+  # InfluxDB 时序数据源
+  - name: InfluxDB
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    database: pv-forecast
+    editable: true
+    jsonData:
+      version: Flux
+      organization: ems-org
+      defaultBucket: pv-forecast
+      tlsSkipVerify: true
+    secureJsonData:
+      token: pv-forecast-token

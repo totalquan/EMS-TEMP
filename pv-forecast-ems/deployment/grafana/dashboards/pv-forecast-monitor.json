@@ -1,0 +1,156 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "光伏预测EMS系统实时监控看板 - 预测精度、服务状态、系统资源",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "服务状态概览",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "pv_forecast_uptime_seconds / 3600", "legendFormat": "运行时长(h)"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "hours", "color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}]}}}
+    },
+    {
+      "title": "24h预测请求数",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "pv_forecast_requests_total", "legendFormat": "总请求数"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}}}
+    },
+    {
+      "title": "平均响应时间",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "pv_forecast_avg_response_ms", "legendFormat": "响应时间(ms)"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms", "color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 500}, {"color": "red", "value": 2000}]}}}
+    },
+    {
+      "title": "已加载模型数",
+      "type": "stat",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "pv_forecast_active_models", "legendFormat": "模型数"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}}}
+    },
+    {
+      "title": "光伏预测功率 vs 实际功率（24h）",
+      "type": "timeseries",
+      "gridPos": {"h": 10, "w": 18, "x": 0, "y": 4},
+      "datasource": "InfluxDB",
+      "targets": [
+        {"refId": "A", "query": "from(bucket: \"pv-forecast\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"pv_forecast\") |> filter(fn: (r) => r._field == \"power_kw\") |> aggregateWindow(every: 15m, fn: mean) |> yield(name: \"预测功率\")"},
+        {"refId": "B", "query": "from(bucket: \"pv-forecast\") |> range(start: v.timeRangeStart, stop: v.timeRangeStop) |> filter(fn: (r) => r._measurement == \"inverter\") |> filter(fn: (r) => r._field == \"ac_power\") |> map(fn: (r) => ({r with _value: r._value / 1000.0})) |> aggregateWindow(every: 15m, fn: mean) |> yield(name: \"实际功率\")"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "kw", "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "lineWidth": 2}}},
+      "legend": {"displayMode": "table", "placement": "bottom"}
+    },
+    {
+      "title": "预测精度指标",
+      "type": "gauge",
+      "gridPos": {"h": 10, "w": 6, "x": 18, "y": 4},
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "1 - pv_forecast_nmae", "legendFormat": "预测准确率"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 1, "color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "red", "value": 0}, {"color": "yellow", "value": 0.8}, {"color": "green", "value": 0.9}]}}}
+    },
+    {
+      "title": "NMAE趋势（24h滚动）",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "pv_forecast_nmae", "legendFormat": "NMAE"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "custom": {"drawStyle": "line", "lineWidth": 2}}},
+      "thresholds": [{"color": "red", "value": 0.15}]
+    },
+    {
+      "title": "合格率趋势（24h滚动）",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "pv_forecast_qualified_rate", "legendFormat": "合格率"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent", "custom": {"drawStyle": "line", "lineWidth": 2}}},
+      "thresholds": [{"color": "red", "value": 0.8}]
+    },
+    {
+      "title": "系统资源监控",
+      "type": "row",
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22},
+      "collapsed": false
+    },
+    {
+      "title": "CPU使用率",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 23},
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "rate(process_cpu_seconds_total[5m]) * 100", "legendFormat": "CPU%"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "percent"}}
+    },
+    {
+      "title": "内存使用",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 23},
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "process_resident_memory_bytes / 1024 / 1024", "legendFormat": "内存(MB)"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "mbytes"}}
+    },
+    {
+      "title": "请求量趋势",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 23},
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "rate(pv_forecast_requests_total[5m])", "legendFormat": "请求速率/s"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["光伏预测", "EMS", "监控"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "Asia/Shanghai",
+  "title": "光伏预测EMS - 实时监控看板",
+  "uid": "pv-forecast-dashboard",
+  "version": 1,
+  "weekStart": ""
+}

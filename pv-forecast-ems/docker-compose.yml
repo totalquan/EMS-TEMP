@@ -1,0 +1,228 @@
+# ============================================
+# 光伏预测EMS系统 - Docker Compose 一键部署
+# 包含：预测服务、InfluxDB、Kafka、MinIO、Grafana、Prometheus
+# ============================================
+
+version: "3.8"
+
+services:
+  # ============================================
+  # 1. 光伏预测服务（核心）
+  # ============================================
+  pv-forecast:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pv-forecast-service
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+      - "9091:9091"
+    environment:
+      - ENV=production
+      - LOG_LEVEL=INFO
+      - TZ=Asia/Shanghai
+      # 电站参数
+      - PV_CAPACITY_KW=5000
+      - PV_LATITUDE=39.61
+      - PV_LONGITUDE=110.07
+      - PV_ALTITUDE=1300
+      # 预测参数
+      - FORECAST_HORIZON_HOURS=4
+      - FORECAST_TIME_STEP_MINUTES=15
+      - MODEL_TYPE=lstm
+      # InfluxDB
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=pv-forecast-token
+      - INFLUXDB_ORG=ems-org
+      - INFLUXDB_BUCKET=pv-forecast
+      # Kafka
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_TOPIC_WEATHER=weather_raw
+      - KAFKA_TOPIC_INVERTER=inverter_raw
+      - KAFKA_TOPIC_METER=meter_raw
+      # MinIO/S3
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY=minioadmin
+      - S3_SECRET_KEY=minioadmin
+      - S3_BUCKET=pv-raw-data
+      # 求解器
+      - SOLVER_ENGINE=pulp
+      # 重训练
+      - RETRAIN_ENABLED=true
+      - RETRAIN_CRON=0 2 * * 0
+    volumes:
+      - ./models/storage:/app/models/storage
+      - ./models/registry:/app/models/registry
+      - ./logs:/app/logs
+      - ./data:/app/data
+    depends_on:
+      - influxdb
+      - kafka
+      - minio
+    networks:
+      - pv-ems-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ============================================
+  # 2. InfluxDB 时序数据库
+  # ============================================
+  influxdb:
+    image: influxdb:2.7
+    container_name: pv-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin12345
+      - DOCKER_INFLUXDB_INIT_ORG=ems-org
+      - DOCKER_INFLUXDB_INIT_BUCKET=pv-forecast
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=pv-forecast-token
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+    networks:
+      - pv-ems-network
+
+  # ============================================
+  # 3. Kafka 消息队列（含ZooKeeper）
+  # ============================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: pv-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+    networks:
+      - pv-ems-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: pv-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    depends_on:
+      - zookeeper
+    networks:
+      - pv-ems-network
+
+  # ============================================
+  # 4. MinIO 对象存储（S3兼容，原始数据湖）
+  # ============================================
+  minio:
+    image: minio/minio:RELEASE.2024-01-01T00-00-00Z
+    container_name: pv-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - pv-ems-network
+
+  # 初始化MinIO bucket
+  minio-init:
+    image: minio/mc:RELEASE.2024-01-01T00-00-00Z
+    container_name: pv-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/pv-raw-data --ignore-existing;
+      /usr/bin/mc policy set public myminio/pv-raw-data;
+      exit 0;
+      "
+    networks:
+      - pv-ems-network
+
+  # ============================================
+  # 5. Prometheus 指标采集
+  # ============================================
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: pv-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deployment/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+    networks:
+      - pv-ems-network
+
+  # ============================================
+  # 6. Grafana 可视化监控
+  # ============================================
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: pv-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deployment/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./deployment/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+      - influxdb
+    networks:
+      - pv-ems-network
+
+# ============================================
+# 数据卷
+# ============================================
+volumes:
+  influxdb-data:
+  influxdb-config:
+  zookeeper-data:
+  kafka-data:
+  minio-data:
+  prometheus-data:
+  grafana-data:
+
+# ============================================
+# 网络
+# ============================================
+networks:
+  pv-ems-network:
+    driver: bridge
